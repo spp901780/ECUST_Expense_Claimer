@@ -1,8 +1,12 @@
 from __future__ import annotations
+from os import read
+from threading import stack_size
 
 from playwright.sync_api import TimeoutError
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+import json
+import re
 
 class FillFinaceSystem:
     AUTH_DIR = Path(__file__).parent.parent / "auth"
@@ -10,6 +14,13 @@ class FillFinaceSystem:
         self.platform = platform
         self.context_path = context_path
         self.invoiceinfo_path = invoiceinfo_path
+        self.invoiceinfo = None
+
+        try:
+            self.invoiceinfo = json.loads(self.invoiceinfo_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"Failed to open invoice file {self.invoiceinfo_path}: {e}")
+            raise
 
 
     def open_main_page(self) -> bool:
@@ -37,6 +48,7 @@ class FillFinaceSystem:
             except TimeoutError:
                 print("Failed to load the main page within the expected time.")
                 
+            self._auto_fill(frame)
             input("Input to stop")
             browser.close()
             playwright_instance.stop()
@@ -48,16 +60,56 @@ class FillFinaceSystem:
             playwright_instance.stop()
             return False
 
-    def auto_fill(self):
+    def _auto_fill(self, page):
         # This is a placeholder implementation. You should replace it with actual logic to fill the form.
-        print("Auto-filling the form...")
+        if self.invoiceinfo is None:
+            print("No invoice information available to fill the form.")
+            raise Exception("No invoice information available.")
+        
+        for invoice in self.invoiceinfo.get("invoices", []):
+            if self.get_invoice_type(invoice) == "数电票":
+                print(invoice["invoice_id"])
+                row = page.locator("tr", has_text="发票类型").first
+                select = row.locator("select:visible")
+                select.select_option("数电票")
 
-    def read_invoice(self):
-        # This is a placeholder implementation. You should replace it with actual logic to read the invoice.
-        print("Reading the invoice...")
+                # 限定同一个 tbody
+                tbody = select.locator("xpath=ancestor::tbody[1]")
+                # 在同一 tbody 内找“发票号码”并输入
+                row = tbody.locator("tr", has_text="发票号码").first
+                input_box = row.locator("input:visible")
+                input_box.fill(invoice["fields"]["invoice_number"]["value"])
+
+                row = tbody.locator("tr", has_text=re.compile(r"开票日期")).first
+                input_box = row.locator("input:visible")
+                input_box.fill(invoice["fields"]["invoice_date"]["value"].replace("年",'').replace("月",'').replace("日",''))
+                
+                row = tbody.locator("tr", has_text=re.compile(r"发票金额")).first
+                input_box = row.locator("input:visible")
+                input_box.fill(invoice["fields"]["amount_with_tax"]["value"])
+                
+                input("halt")
+
+
+                    
+                
+    @staticmethod
+    def get_invoice_type(invoice) -> str:
+        fields = invoice.get("fields", {})
+        result = ""
+        if fields["invoice_code"]["matched"] == False \
+            and fields["invoice_number"]["matched"] == True: #数电票
+            result = "数电票"
+        elif fields["invoice_code"]["matched"] == True:
+            result = "普通数字发票"
+        
+        return result
+
+
+
 
 def main():
-    fill_system = FillFinaceSystem(invoiceinfo_path=Path("----PATH----"))
+    fill_system = FillFinaceSystem(invoiceinfo_path=Path("/run/user/1000/gvfs/onedrive:host=outlook.com,user=spp901780/OneDrive/发票/测试用/眼镜项目发票4821.7/invoice_parsed/all_invoices.json"))
     success = fill_system.open_main_page()
     if success:
         print("Main page opened successfully!")
