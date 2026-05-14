@@ -1,3 +1,3 @@
-from .core import LoginRequest
+from .login import LoginRequest
 
 __all__ = ["LoginRequest"]

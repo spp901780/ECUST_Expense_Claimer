@@ -1,6 +1,7 @@
 from __future__ import annotations
 from os import read
 from threading import stack_size
+import time
 
 from playwright.sync_api import TimeoutError
 from dataclasses import dataclass, field, fields
@@ -42,13 +43,14 @@ class FillFinaceSystem:
                 with page.expect_response(
                     lambda r: "commonQuery_doQuery.action" in r.url and r.status == 200
                 ):
-                    frame.wait_for_timeout(500)
+                    page.wait_for_load_state("networkidle")
+                    frame.wait_for_timeout(5000)
                     frame = page.frame_locator("iframe[src*='WF_YB6']")
                     frame.locator("li[onclick*='10313']").click()
             except TimeoutError:
                 print("Failed to load the main page within the expected time.")
                 
-            self._auto_fill(frame)
+            self._auto_fill(page, frame)
             input("Input to stop")
             browser.close()
             playwright_instance.stop()
@@ -60,7 +62,7 @@ class FillFinaceSystem:
             playwright_instance.stop()
             return False
 
-    def _auto_fill(self, page):
+    def _auto_fill(self, page, frame):
         # This is a placeholder implementation. You should replace it with actual logic to fill the form.
         if self.invoiceinfo is None:
             print("No invoice information available to fill the form.")
@@ -69,7 +71,7 @@ class FillFinaceSystem:
         for invoice in self.invoiceinfo.get("invoices", []):
             if self.get_invoice_type(invoice) == "数电票":
                 print(invoice["invoice_id"])
-                row = page.locator("tr", has_text="发票类型").first
+                row = frame.locator("tr", has_text="发票类型").first
                 select = row.locator("select:visible")
                 select.select_option("数电票")
 
@@ -87,8 +89,19 @@ class FillFinaceSystem:
                 row = tbody.locator("tr", has_text=re.compile(r"发票金额")).first
                 input_box = row.locator("input:visible")
                 input_box.fill(invoice["fields"]["amount_with_tax"]["value"])
+
+                time.sleep(0.4)
+                frame.get_by_role("button", name="查验").click()
+                try:
+                    with page.expect_response(
+                        lambda r: r.request.method == "POST"
+                        and r.status == 200
+                    ):
+                        pass
+                except TimeoutError:
+                    print(invoice, "查验失败")
                 
-                input("halt")
+
 
 
                     
@@ -109,7 +122,7 @@ class FillFinaceSystem:
 
 
 def main():
-    fill_system = FillFinaceSystem(invoiceinfo_path=Path("/run/user/1000/gvfs/onedrive:host=outlook.com,user=spp901780/OneDrive/发票/测试用/眼镜项目发票4821.7/invoice_parsed/all_invoices.json"))
+    fill_system = FillFinaceSystem(invoiceinfo_path=Path("D:/OneDrive/发票/测试用/眼镜项目发票4821.7/invoice_parsed/all_invoices.json"))
     success = fill_system.open_main_page()
     if success:
         print("Main page opened successfully!")

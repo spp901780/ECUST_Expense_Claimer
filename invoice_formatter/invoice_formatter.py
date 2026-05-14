@@ -390,9 +390,6 @@ class InvoiceFormatter:
                     "value": unique_matches[0] if unique_matches else None,
                     "matched": bool(unique_matches),
                 }
-
-            if not unique_matches:
-                print(rule,extraction)
         return result
 
     @staticmethod
