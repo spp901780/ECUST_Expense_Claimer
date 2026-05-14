@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import pymupdf
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -223,7 +224,7 @@ class InvoiceFormatter:
                 description="销售方名称",
                 region_areas=["right"],
                 patterns=[
-                    r"(?:销.*(?:名称))[:：\s]([^\n\r]+?(大学|公司|（个体工商户）|商行|店|经营部|营业部))",
+                    r"(?:销.*(?:名称))[:：\s]([^\n\r]+?(大学|公司|（个体工商户）|商行|店|经营部|营业部|厂))",
                     r"(?:Seller(?:\s*Name)?)[:：\s]*([^\n\r]+)",
                 ],
             ),
@@ -232,7 +233,7 @@ class InvoiceFormatter:
                 description="购买方名称",
                 region_areas=["left"],
                 patterns=[
-                    r"(?:购.*(?:名称))[:：\s]([^\n\r]+?(大学|公司|（个体工商户）|商行|店|经营部|营业部))",
+                    r"(?:购.*(?:名称))[:：\s]([^\n\r]+?(大学|公司|（个体工商户）|商行|店|经营部|营业部|厂))",
                     r"(?:Buyer(?:\s*Name)?)[:：\s]*([^\n\r]+)",
                 ],
             ),
@@ -257,11 +258,24 @@ class InvoiceFormatter:
             raise FileNotFoundError(f"路径不存在: {input_path}")
 
         invoice_files, output_base_dir = self._collect_files_and_output_base(input_path)
-        invoices_data = [self._process_single_invoice(path) for path in invoice_files]
-
         output_dir = output_base_dir / self.output_subdir
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / self.output_filename
+        
+        invoices_data = []
+        for path in invoice_files:
+            invoice = self._process_single_invoice(path)  # 预处理以验证文件可读性
+            extract_data = invoice.get("fields", {})
+            is_valid = True
+            if not extract_data.get("invoice_code", {}).get("matched"):
+                for k in extract_data.keys() - {"invoice_code"}:
+                    if not extract_data[k].get("matched"):
+                        is_valid = False
+                        
+            if is_valid:
+                invoices_data.append(invoice)
+            else:
+                shutil.copy2(path, output_dir / path.name)
 
         payload = {
             "version": "1.0",
