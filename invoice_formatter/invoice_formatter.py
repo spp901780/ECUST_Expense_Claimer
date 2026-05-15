@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Any
 
+from FlagEmbedding import FlagAutoModel
+from sklearn.preprocessing import normalize
+
 
 @dataclass
 class FieldRule:
@@ -161,16 +164,19 @@ class InvoiceFormatter:
     
     PDF_EXTENSIONS = {".pdf"}
     IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
-    DEFAULT_OUTPUT_SUBDIR = "invoice_parsed"
+    DEFAULT_OUTPUT_SUBDIR = "formatter_processed_invoices"
     DEFAULT_OUTPUT_FILE = "all_invoices.json"
+    DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 
     def __init__(
         self,
+        invoice_path: str | Path,
         field_rules: Optional[Sequence[FieldRule]] = None,
         output_subdir: str = DEFAULT_OUTPUT_SUBDIR,
         output_filename: str = DEFAULT_OUTPUT_FILE,
         recursive: bool = True,
     ) -> None:
+        self.invoice_path = invoice_path
         self.field_rules: Dict[str, FieldRule] = {}
         self.output_subdir = output_subdir
         self.output_filename = output_filename
@@ -238,6 +244,14 @@ class InvoiceFormatter:
                 ],
             ),
             FieldRule(
+                name="item_class",
+                description="商品和服务分类名",
+                region_areas=["left"],
+                patterns=[
+                    r"(?:单位(?:数量)?)\*(.+?)\*",
+                ],
+            ),
+            FieldRule(
                 name="invoice_type",
                 description="发票类型",
                 region_areas=["right"],
@@ -251,17 +265,19 @@ class InvoiceFormatter:
         """添加字段规则"""
         self.field_rules[rule.name] = rule
 
-    def process_and_save(self, invoice_path: str | Path) -> Path:
+    def recognize(self) -> Path:
         """处理发票文件并保存结果"""
-        input_path = Path(invoice_path).expanduser().resolve()
+        input_path = Path(self.invoice_path).expanduser().resolve()
         if not input_path.exists():
             raise FileNotFoundError(f"路径不存在: {input_path}")
 
+        print("collecting invoice files...")
         invoice_files, output_base_dir = self._collect_files_and_output_base(input_path)
         output_dir = output_base_dir / self.output_subdir
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / self.output_filename
         
+        print("process files and extract data...")
         invoices_data = []
         for path in invoice_files:
             invoice = self._process_single_invoice(path)  # 预处理以验证文件可读性
@@ -275,21 +291,14 @@ class InvoiceFormatter:
             if is_valid:
                 invoices_data.append(invoice)
             else:
-                shutil.copy2(path, output_dir / path.name)
+                try:
+                    shutil.copy2(path, output_dir / path.name)
+                except Exception as e:
+                    print(f"Error occurred while copying {path}: {e}")
 
         payload = {
             "version": "1.0",
             "source_path": str(input_path),
-            # "field_registry": {
-            #     name: {
-            #         "description": rule.description,
-            #         "patterns": rule.patterns,
-            #         "capture_group": rule.capture_group,
-            #         "multiple": rule.multiple,
-            #         "region_areas": rule.region_areas,
-            #     }
-            #     for name, rule in self.field_rules.items()
-            # },
             "extension_area": {
                 "custom_field_rules": [],
                 "custom_invoice_tags": [],
@@ -300,6 +309,64 @@ class InvoiceFormatter:
 
         output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return output_path
+
+    def classify(self, processed_file: Path, embedding_model: str = None) -> None:
+        if not processed_file.exists():
+            raise FileNotFoundError(f"Processed file not found: {processed_file}")
+        data = json.loads(processed_file.read_text(encoding="utf-8"))
+
+        # 使用默认的嵌入模型
+        if embedding_model is None:
+            embedding_model = self.DEFAULT_EMBEDDING_MODEL
+
+        # 读取实体项目语料列表
+        entity_list_path = (Path(__file__).parent / "classification_list" / "实体项目列表.txt")
+        entity_list = [
+            line.strip()
+            for line in entity_list_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        service_list_path = (Path(__file__).parent / "classification_list" / "服务项目列表.txt")
+        service_list = [
+            line.strip()
+            for line in service_list_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+        print("importing model...")
+        try:
+            model_dir = Path(__file__).parent / "models" / embedding_model
+            model = FlagAutoModel.from_finetuned(str(model_dir) if model_dir.exists() else embedding_model,
+                                                    query_instruction_for_retrieval="为这个句子生成表示以用于检索相关文章：",
+                                                    use_fp16=True)
+        except Exception as e:
+            print(f"Error occurred while importing model: {e}")
+            return
+
+        embeddings_entity_list = model.encode_corpus(entity_list)
+        embeddings_service_list = model.encode_corpus(service_list)
+        for invoice in data.get("invoices", []):
+            item_class = invoice.get("fields", {}).get("item_class", {}).get("value")
+            if item_class:
+                embeddings_classname = model.encode_queries(item_class)
+                # 计算与实体项目的相似度
+                entity_similarity = (embeddings_classname @ normalize(embeddings_entity_list).T).max()
+                service_similarity = (embeddings_classname @ normalize(embeddings_service_list).T).max()
+                similarities = entity_similarity / (service_similarity + entity_similarity)
+                print(f"class name: {item_class}, entity_similarity: {entity_similarity}, service_similarity: {service_similarity}, similarities: {similarities}")
+
+                if similarities > 0.55:
+                    self._set_invoice_class_and_copy(invoice, "entity", similarities, processed_file.parent)
+                elif 0.45 < similarities:
+                    self._set_invoice_class_and_copy(invoice, "service", 1 - similarities, processed_file.parent)
+                else:                    
+                    self._set_invoice_class_and_copy(invoice, "uncertain", similarities, processed_file.parent)
+            else:
+                invoice["custom_fields"] = {
+                    "value": None,
+                    "similarity": None,
+                }
+        processed_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _collect_files_and_output_base(self, input_path: Path) -> tuple[List[Path], Path]:
         """收集需要处理的文件"""
@@ -316,6 +383,7 @@ class InvoiceFormatter:
             path
             for path in candidates
             if path.is_file() and path.suffix.lower() in supported_extensions
+            and not set(path.parts).intersection({self.DEFAULT_OUTPUT_SUBDIR})
         ]
         invoice_files.sort()
         return invoice_files, input_path
@@ -332,6 +400,7 @@ class InvoiceFormatter:
             "file_type": file_path.suffix.lower(),
             "extraction": extraction,
             "fields": fields,
+            "classification": {},
             "custom_fields": {},
         }
 
@@ -398,6 +467,18 @@ class InvoiceFormatter:
         if capture_group > match.re.groups:
             return None
         return match.group(capture_group)
+    
+    @staticmethod
+    def _set_invoice_class_and_copy(invoice, class_name: str, similarity: float, file_dir: Path):
+        (file_dir / Path(class_name)).mkdir(parents=True, exist_ok=True)
+        invoice["classification"] = {
+            "value": class_name,
+            "similarity": f"{similarity:.4f}",
+        }
+        try:
+            shutil.copy2(Path(invoice["file_path"]), file_dir / Path(class_name) /invoice["file_name"])
+        except Exception as e:
+            print(f"Error occurred while copying {Path(invoice['file_path'])}: {e}")
 
 
 def _build_cli_parser() -> argparse.ArgumentParser:
@@ -431,11 +512,13 @@ def main() -> None:
     args = parser.parse_args()
 
     formatter = InvoiceFormatter(
+        args.invoice_path,
         output_subdir=args.output_subdir,
         output_filename=args.output_file,
         recursive=not args.no_recursive,
     )
-    output_path = formatter.process_and_save(args.invoice_path)
+    output_path = formatter.recognize()
+    formatter.classify(output_path)
     print(f"已生成: {output_path}")
 
 
