@@ -130,7 +130,7 @@ class FillFinaceSystem:
         page = browser.pages[0]
         if self.platform == "ECUST":
             #enter the main page
-            page.goto("https://cwc.ecust.edu.cn/WFManager/home2.jsp")  # Replace with actual login URL
+            page.goto("https://cwc.ecust.edu.cn/WFManager/home2.jsp") 
             page.wait_for_load_state("networkidle")
             page.locator("div[onclick*='WF_YB6']").first.click()
             #wait for the page to load
@@ -153,7 +153,6 @@ class FillFinaceSystem:
                 print("No invoice information available to fill the form.")
                 raise Exception("No invoice information available.")
             self._verify_invoices(page, frame)
-            input("Input to stop")
             self._apply_for_reimbursement(page, frame)
             input("Input to stop")
 
@@ -205,7 +204,7 @@ class FillFinaceSystem:
                 except TimeoutError:
                     print(invoice, "查验失败")
                 
-    def _apply_for_reimbursement(self, page, frame):
+    def _apply_for_reimbursement(self, page, frame) -> int:
         frame.locator("li[onclick*='5215']").click()
         frame.get_by_role("button", name="申请报销单").click()
 
@@ -262,6 +261,14 @@ class FillFinaceSystem:
             print("Failed to preceed while waiting for the next page to load.")
 
         input("手动完成报销单填写并提交后继续...")
+        page.goto("https://cwc.ecust.edu.cn/WFManager/home2.jsp") 
+        while True:
+            raw_input = input("请输入获取的报销单序列号以用于实装处填报")
+            try:
+                number = int(raw_input)
+                return number
+            except ValueError:
+                print("Invalid input. Please enter a valid number.")
 
                 
     @staticmethod

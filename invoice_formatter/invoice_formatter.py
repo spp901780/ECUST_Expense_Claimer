@@ -10,8 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Any
 
-from FlagEmbedding import FlagAutoModel
-from sklearn.preprocessing import normalize
+
 
 
 @dataclass
@@ -167,6 +166,7 @@ class InvoiceFormatter:
     DEFAULT_OUTPUT_SUBDIR = "formatter_processed_invoices"
     DEFAULT_OUTPUT_FILE = "all_invoices.json"
     DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
+    CLASSIFICATION_TYPE_LIST = ["material", "service", "travel"]
 
     def __init__(
         self,
@@ -182,6 +182,7 @@ class InvoiceFormatter:
         self.output_filename = output_filename
         self.recursive = recursive
         self.file_handlers: List[FileHandler] = [PDFHandler(), ImageHandler()]
+        self.processed_invoice_file = None
 
         for rule in field_rules or self.default_field_rules():
             self.add_field_rule(rule)
@@ -248,7 +249,7 @@ class InvoiceFormatter:
                 description="商品和服务分类名",
                 region_areas=["left"],
                 patterns=[
-                    r"(?:单位(?:数量)?)\*(.+?)\*",
+                    r"(?:(?:单位数量)|(?:项目名称单价))\*(.+?)\*(.{0,2})",
                 ],
             ),
             FieldRule(
@@ -287,12 +288,16 @@ class InvoiceFormatter:
                 for k in extract_data.keys() - {"invoice_code"}:
                     if not extract_data[k].get("matched"):
                         is_valid = False
+            else:
+                is_valid = False
                         
             if is_valid:
                 invoices_data.append(invoice)
             else:
                 try:
-                    shutil.copy2(path, output_dir / path.name)
+                    print(f"无法识别关键信息或发票类型无法处理，跳过并移动文件: {path}")
+                    (output_dir / "_UNABLE_PROCESS_").mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, output_dir / "_UNABLE_PROCESS_")
                 except Exception as e:
                     print(f"Error occurred while copying {path}: {e}")
 
@@ -308,9 +313,20 @@ class InvoiceFormatter:
         }
 
         output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.processed_invoice_file = output_path
         return output_path
 
-    def classify(self, processed_file: Path, embedding_model: Optional[str] = None) -> None:
+    def classify(self, processed_file: Optional[Path] = None, embedding_model: Optional[str] = None) -> bool:
+        print("importing ML related libraries...")
+        from FlagEmbedding import FlagAutoModel
+        from sklearn.preprocessing import normalize
+        if not processed_file:
+            if not self.processed_invoice_file:
+                print("No processed invoice file available for classification. Please run recognize() first.")
+                return False
+            else:
+                processed_file = self.processed_invoice_file
+
         if not processed_file.exists():
             raise FileNotFoundError(f"Processed file not found: {processed_file}")
         data = json.loads(processed_file.read_text(encoding="utf-8"))
@@ -319,53 +335,95 @@ class InvoiceFormatter:
         if embedding_model is None:
             embedding_model = self.DEFAULT_EMBEDDING_MODEL
 
-        # 读取实体项目语料列表
-        material_list_path = (Path(__file__).parent / "classification_list" / "material_items_list.txt")
-        material_list = [
-            line.strip()
-            for line in material_list_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        service_list_path = (Path(__file__).parent / "classification_list" / "service_items_list.txt")
-        service_list = [
-            line.strip()
-            for line in service_list_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-
         print("importing model...")
         try:
-            model_dir = Path(__file__).parent / "models" / embedding_model
+            model_dir = Path(__file__).parent / "models" / embedding_model # from_finetuned 通过文件名查找模型，会自动转换路径或从 Hugging Face Hub 下载
             model = FlagAutoModel.from_finetuned(str(model_dir) if model_dir.exists() else embedding_model,
                                                     query_instruction_for_retrieval="为这个句子生成表示以用于检索相关文章：",
                                                     use_fp16=True)
         except Exception as e:
             print(f"Error occurred while importing model: {e}")
-            return
+            return False
 
-        embeddings_material_list: Any = model.encode_corpus(material_list)
-        embeddings_service_list: Any = model.encode_corpus(service_list)
+        embeddings_items_lists: dict[str, Any] = {}
+        for class_name in self.CLASSIFICATION_TYPE_LIST:
+            embeddings_items_lists[class_name] = normalize(self._get_items_embedding(class_name, model))
         for invoice in data.get("invoices", []):
             item_class = invoice.get("fields", {}).get("item_class", {}).get("value")
             if item_class:
-                embeddings_classname: Any = model.encode_queries(item_class)
-                # 计算与实体项目的相似度z
-                material_similarity = (embeddings_classname @ normalize(embeddings_material_list).T).max()
-                service_similarity = (embeddings_classname @ normalize(embeddings_service_list).T).max()
-                similarities = material_similarity / (service_similarity + material_similarity)
+                embedding_classname: Any = model.encode_queries(item_class)
+                # 计算与语素列表的相似度
+                similarities: dict[str, float] = {}
+                for class_name, embedding_item_list in embeddings_items_lists.items():
+                    similarity_list = (embedding_item_list @ embedding_classname.T).flatten()
+                    # 计算前五个的均值作为相似度
+                    similarity_list.partition(-5)
+                    similarities[class_name] = float(similarity_list[-5:].mean())
 
-                if similarities > 0.55:
-                    self._set_invoice_class_and_copy(invoice, "material", similarities, processed_file.parent)
-                elif 0.45 < similarities:
-                    self._set_invoice_class_and_copy(invoice, "service", 1 - similarities, processed_file.parent)
-                else:                    
-                    self._set_invoice_class_and_copy(invoice, "uncertain", similarities, processed_file.parent)
+                # 为特殊关键词增加权重
+                add_weight_keys = {
+                    "service": ["劳务"],
+                    "material": ["货物","材料","商品","设备"],
+                }
+                for class_name, keywords in add_weight_keys.items():
+                    if any(keyword in item_class for keyword in keywords):
+                        similarities[class_name] += 0.05
+
+                sorted_similarities = sorted(
+                    similarities.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                # 判别发票类型
+                
+                best_match = sorted_similarities[0]
+                if sorted_similarities[0][1] - sorted_similarities[1][1] > 0.12:
+                    self._set_invoice_class_and_copy(invoice, best_match[0], best_match[1], processed_file.parent)
+                    invoice["classification"] = {
+                    "value": best_match[0],
+                    "similarity": str(best_match[1]),
+                    } 
+                else:
+                    print(f"Classification uncertain for invoice {invoice.get('file_path')}")
+                    print(invoice.get('fields', {}).get('item_class', {}).get('value'))
+                    print(f"Similarities: {sorted_similarities}")
+                    self._set_invoice_class_and_copy(invoice, "uncertain", best_match[1], processed_file.parent)
+                    invoice["classification"] = {
+                    "value": "uncertain",
+                    "similarity": str(best_match[1]),
+                    } 
             else:
-                invoice["custom_fields"] = {
+                invoice["classification"] = {
                     "value": None,
                     "similarity": None,
                 }
         processed_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    
+    @staticmethod
+    def _get_items_embedding(class_name: str, model):
+        file_path = (Path(__file__).parent / "classification_list" / f"{class_name}_items_list.txt")
+        items_list = [
+            line.strip()
+            for line in file_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        return model.encode_corpus(items_list)
+    
+    @staticmethod
+    def _set_invoice_class_and_copy(invoice, class_name: str, similarity: float, file_dir: Path):
+        (file_dir / Path(class_name)).mkdir(parents=True, exist_ok=True)
+        invoice["classification"] = {
+            "value": class_name,
+            "similarity": f"{similarity:.4f}",
+        }
+        try:
+            target_path = file_dir / Path(class_name) / invoice["file_name"]
+            shutil.copy2(Path(invoice["file_path"]), target_path)
+            invoice["file_path"] = str(target_path)
+        except Exception as e:
+            print(f"Error occurred while copying {Path(invoice['file_path'])}: {e}")
+
 
     def _collect_files_and_output_base(self, input_path: Path) -> tuple[List[Path], Path]:
         """收集需要处理的文件"""
@@ -467,19 +525,7 @@ class InvoiceFormatter:
             return None
         return match.group(capture_group)
     
-    @staticmethod
-    def _set_invoice_class_and_copy(invoice, class_name: str, similarity: float, file_dir: Path):
-        (file_dir / Path(class_name)).mkdir(parents=True, exist_ok=True)
-        invoice["classification"] = {
-            "value": class_name,
-            "similarity": f"{similarity:.4f}",
-        }
-        try:
-            target_path = file_dir / Path(class_name) / invoice["file_name"]
-            shutil.copy2(Path(invoice["file_path"]), target_path)
-            invoice["file_path"] = str(target_path)
-        except Exception as e:
-            print(f"Error occurred while copying {Path(invoice['file_path'])}: {e}")
+
 
 
 def _build_cli_parser() -> argparse.ArgumentParser:

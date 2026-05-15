@@ -11,7 +11,7 @@ class LoginRequest:
         self.platform = platform
         self.context_path = context_path
     
-    def open_login_page(self) -> bool:
+    def start_login(self) -> bool:
         # This is a placeholder implementation. You should replace it with actual logic to open the login page.
         from playwright.sync_api import sync_playwright
         playwright_instance = sync_playwright().start()
@@ -22,11 +22,6 @@ class LoginRequest:
             page.goto("https://sso.ecust.edu.cn/authserver/login?service=http://cwc.ecust.edu.cn/WFManager/home2.jsp")  # Replace with actual login URL
             try:
                 page.wait_for_url("https://cwc.ecust.edu.cn/WFManager/home2.jsp**", timeout=5*60*1000)  # Wait for the login to complete and redirect to the home page
-                cookies = browser.cookies()
-
-                for c in cookies:
-                    print(c)
-
                 return True
             except TimeoutError:
                 print("Login failed: Timeout occurred while waiting for the login page.")
@@ -40,7 +35,7 @@ class LoginRequest:
 
 def main():
     login_request = LoginRequest()
-    success = login_request.open_login_page()
+    success = login_request.start_login()
     if success:
         print("Login successful!")
     else:
