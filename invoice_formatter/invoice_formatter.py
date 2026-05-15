@@ -320,10 +320,10 @@ class InvoiceFormatter:
             embedding_model = self.DEFAULT_EMBEDDING_MODEL
 
         # 读取实体项目语料列表
-        entity_list_path = (Path(__file__).parent / "classification_list" / "entity_items_list.txt")
-        entity_list = [
+        material_list_path = (Path(__file__).parent / "classification_list" / "material_items_list.txt")
+        material_list = [
             line.strip()
-            for line in entity_list_path.read_text(encoding="utf-8").splitlines()
+            for line in material_list_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
         service_list_path = (Path(__file__).parent / "classification_list" / "service_items_list.txt")
@@ -343,19 +343,19 @@ class InvoiceFormatter:
             print(f"Error occurred while importing model: {e}")
             return
 
-        embeddings_entity_list: Any = model.encode_corpus(entity_list)
+        embeddings_material_list: Any = model.encode_corpus(material_list)
         embeddings_service_list: Any = model.encode_corpus(service_list)
         for invoice in data.get("invoices", []):
             item_class = invoice.get("fields", {}).get("item_class", {}).get("value")
             if item_class:
                 embeddings_classname: Any = model.encode_queries(item_class)
                 # 计算与实体项目的相似度z
-                entity_similarity = (embeddings_classname @ normalize(embeddings_entity_list).T).max()
+                material_similarity = (embeddings_classname @ normalize(embeddings_material_list).T).max()
                 service_similarity = (embeddings_classname @ normalize(embeddings_service_list).T).max()
-                similarities = entity_similarity / (service_similarity + entity_similarity)
+                similarities = material_similarity / (service_similarity + material_similarity)
 
                 if similarities > 0.55:
-                    self._set_invoice_class_and_copy(invoice, "entity", similarities, processed_file.parent)
+                    self._set_invoice_class_and_copy(invoice, "material", similarities, processed_file.parent)
                 elif 0.45 < similarities:
                     self._set_invoice_class_and_copy(invoice, "service", 1 - similarities, processed_file.parent)
                 else:                    
@@ -475,7 +475,9 @@ class InvoiceFormatter:
             "similarity": f"{similarity:.4f}",
         }
         try:
-            shutil.copy2(Path(invoice["file_path"]), file_dir / Path(class_name) /invoice["file_name"])
+            target_path = file_dir / Path(class_name) / invoice["file_name"]
+            shutil.copy2(Path(invoice["file_path"]), target_path)
+            invoice["file_path"] = str(target_path)
         except Exception as e:
             print(f"Error occurred while copying {Path(invoice['file_path'])}: {e}")
 

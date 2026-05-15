@@ -219,3 +219,6 @@ __marimo__/
 
 # Authentication files
 auth/
+
+# Personal configuration files
+reimbursement_info.json
