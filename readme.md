@@ -41,10 +41,9 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-### 4. 安装 Playwright 及浏览器
+### 4. 安装 Playwright 浏览器
 
 ```bash
-python -m pip install playwright
 python -m playwright install
 ```
 
