@@ -337,10 +337,23 @@ class InvoiceFormatter:
 
         print("importing model...")
         try:
-            model_dir = Path(__file__).parent / "models" / embedding_model # from_finetuned 通过文件名查找模型，会自动转换路径或从 Hugging Face Hub 下载
-            model = FlagAutoModel.from_finetuned(str(model_dir) if model_dir.exists() else embedding_model,
-                                                    query_instruction_for_retrieval="为这个句子生成表示以用于检索相关文章：",
-                                                    use_fp16=True)
+            model_dir = Path(__file__).parent / "models" / "models--BAAI--bge-small-zh-v1.5" / "snapshots" / "7999e1d3359715c523056ef9478215996d62a620"
+            # 优先使用本地模型路径并显式指定 model_class 以绕过 basename->mapping 的限制
+            try:
+                model = FlagAutoModel.from_finetuned(
+                    str(model_dir),
+                    model_class="encoder-only-base",
+                    query_instruction_for_retrieval="为这个句子生成表示以用于检索相关文章：",
+                    use_fp16=True,
+                )
+            except ValueError as err:
+                # 若本地加载失败（映射或其他问题），回退到从 Hugging Face 下载
+                print(f"local model load failed, fallback to remote: {err}")
+                model = FlagAutoModel.from_finetuned(
+                    embedding_model,
+                    query_instruction_for_retrieval="为这个句子生成表示以用于检索相关文章：",
+                    use_fp16=True,
+                )
         except Exception as e:
             print(f"Error occurred while importing model: {e}")
             return False
