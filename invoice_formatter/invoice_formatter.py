@@ -320,13 +320,13 @@ class InvoiceFormatter:
             embedding_model = self.DEFAULT_EMBEDDING_MODEL
 
         # 读取实体项目语料列表
-        entity_list_path = (Path(__file__).parent / "classification_list" / "实体项目列表.txt")
+        entity_list_path = (Path(__file__).parent / "classification_list" / "entity_items_list.txt")
         entity_list = [
             line.strip()
             for line in entity_list_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        service_list_path = (Path(__file__).parent / "classification_list" / "服务项目列表.txt")
+        service_list_path = (Path(__file__).parent / "classification_list" / "service_items_list.txt")
         service_list = [
             line.strip()
             for line in service_list_path.read_text(encoding="utf-8").splitlines()
