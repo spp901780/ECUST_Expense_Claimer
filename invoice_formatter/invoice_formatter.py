@@ -75,7 +75,7 @@ class PDFHandler(FileHandler):
                 left_rect = pymupdf.Rect(page_rect.x0, page_rect.y0, middle_x, page_rect.y1)
                 right_rect = pymupdf.Rect(middle_x, page_rect.y0, page_rect.x1, page_rect.y1)
 
-                words = page.get_text("words", clip=left_rect, sort=True)
+                words: Any = page.get_text("words", clip=left_rect, sort=True)
                 region_lines = self._lines_from_words(words)
                 extracted_lefthalf = "".join(region_lines)
 
@@ -310,7 +310,7 @@ class InvoiceFormatter:
         output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return output_path
 
-    def classify(self, processed_file: Path, embedding_model: str = None) -> None:
+    def classify(self, processed_file: Path, embedding_model: Optional[str] = None) -> None:
         if not processed_file.exists():
             raise FileNotFoundError(f"Processed file not found: {processed_file}")
         data = json.loads(processed_file.read_text(encoding="utf-8"))
@@ -343,17 +343,16 @@ class InvoiceFormatter:
             print(f"Error occurred while importing model: {e}")
             return
 
-        embeddings_entity_list = model.encode_corpus(entity_list)
-        embeddings_service_list = model.encode_corpus(service_list)
+        embeddings_entity_list: Any = model.encode_corpus(entity_list)
+        embeddings_service_list: Any = model.encode_corpus(service_list)
         for invoice in data.get("invoices", []):
             item_class = invoice.get("fields", {}).get("item_class", {}).get("value")
             if item_class:
-                embeddings_classname = model.encode_queries(item_class)
-                # 计算与实体项目的相似度
+                embeddings_classname: Any = model.encode_queries(item_class)
+                # 计算与实体项目的相似度z
                 entity_similarity = (embeddings_classname @ normalize(embeddings_entity_list).T).max()
                 service_similarity = (embeddings_classname @ normalize(embeddings_service_list).T).max()
                 similarities = entity_similarity / (service_similarity + entity_similarity)
-                print(f"class name: {item_class}, entity_similarity: {entity_similarity}, service_similarity: {service_similarity}, similarities: {similarities}")
 
                 if similarities > 0.55:
                     self._set_invoice_class_and_copy(invoice, "entity", similarities, processed_file.parent)
@@ -517,8 +516,10 @@ def main() -> None:
         output_filename=args.output_file,
         recursive=not args.no_recursive,
     )
+    print("Processing invoices...")
     output_path = formatter.recognize()
-    formatter.classify(output_path)
     print(f"已生成: {output_path}")
+    formatter.classify(output_path)
+    print("分类完成。")
 
 
