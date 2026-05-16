@@ -42,7 +42,6 @@ class ECUST_FillSystem(FillSystem):
                 break
             else:
                 print("重新执行自动填充报销单...")
-        input("Input to stop")   
         return number
 
 
