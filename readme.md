@@ -1,11 +1,11 @@
 # ECUST Expense Claimer
 
-面向校内报销流程的自动化工具集，覆盖发票格式化、分类、认证以及财务处报销单填报等环节。
+面向校内报销流程的自动化工具集，覆盖发票格式化、分类、认证以及财务处报销单填报，实装处审核单等环节。
 
 <!-- Highlight: Quick summary and warnings -->
 <div style="border-radius:6px; padding:10px; background:#fff8e1; border-left:6px solid #ffa000; margin:12px 0;">
    <strong style="color:#bf360c; font-size:1.05em;">重要提醒：</strong>
-   <span style="color:#bf360c; font-weight:600;">本工具支持自动填表与保存，但请在每次自动提交前<strong>人工复核</strong>所有填写项与附件（尤其是支付信息与金额）。</span>
+   <span style="color:#bf360c; font-weight:600;">本工具支持自动填表与保存，但请在每次提交前<strong>人工复核</strong>所有填写项与附件（尤其是发票类型与金额）。</span>
 </div>
 
 <div style="border-radius:6px; padding:8px; background:#e3f2fd; border-left:6px solid #1976d2; margin-bottom:16px;">
@@ -29,6 +29,7 @@
 - 发票格式化识别与存储
 - 发票分类与认证流程自动化
 - 财务处登录与报销单申请自动化
+- 实装处审核申请
 
 ## 快速开始
 
@@ -64,7 +65,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-4) 安装 Playwright 浏览器（仅首次安装时需要）：
+4) 安装 Playwright 浏览器：
 
 ```bash
 python -m playwright install
@@ -76,7 +77,6 @@ python -m playwright install
 python main.py
 ```
 
-注意：运行时请按终端提示操作，若报错请参考下方“故障排查”部分。
 
 ## 使用方法
 
@@ -127,7 +127,7 @@ python main.py
    - 默认使用 **BGE** 模型（`BAAI/bge-small-zh-v1.5`），模型文件位于 `invoice_formatter/models/`，可替换为兼容模型。
 
 2. **登录 — `login/`**
-   - 使用 Playwright 打开并复用登录态，完成财务系统登录流程。
+   - 使用 Playwright 打开并复用登录态，完成系统登录流程。
 
 3. **自动填充 — `finance_fill/`**
    - 基于识别结果自动执行查验与报销单填写、提交等操作。
