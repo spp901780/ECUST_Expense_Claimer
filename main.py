@@ -1,11 +1,25 @@
-import finance_fill
+import fill_system
 import invoice_formatter
 import login
 from pathlib import Path
 
 def main():
-    invoice_path = Path(input("请输入发票信息文件路径："))
-    formatter = invoice_formatter.InvoiceFormatter(invoice_path)
+    while True:
+        input_raw = input("请输入发票信息文件路径：")
+        if input_raw.strip() == "":
+            print("未输入路径")
+            continue
+        try:
+            input_path = Path(input_raw).expanduser().resolve()
+            if not input_path.exists():
+                print(f"路径不存在: {input_path}")
+                continue
+            else:
+                break
+        except Exception as e:
+            print(f"路径无效: {e}")
+            continue
+    formatter = invoice_formatter.InvoiceFormatter(input_raw)
     print("正在识别发票信息...")
     output_path = formatter.recognize()
     if not output_path is None:
@@ -26,10 +40,14 @@ def main():
     else:
         print("登录失败，请检查登录流程。")
         return
-    finance_filler = finance_fill.FillFinaceSystem(
+    
+    finance_filler = fill_system.FillSystem(
         invoiceinfo_path=output_path,
+        platform="ECUST"
     )
-    finance_filler.start_operation()
+
+    number = finance_filler.start_finance_fill()
+    finance_filler.start_equip_fill(number)
 
 if __name__ == "__main__":
     main()

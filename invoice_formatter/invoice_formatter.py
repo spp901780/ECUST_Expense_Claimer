@@ -268,12 +268,18 @@ class InvoiceFormatter:
 
     def recognize(self) -> Path:
         """处理发票文件并保存结果"""
-        input_path = Path(self.invoice_path).expanduser().resolve()
-        if not input_path.exists():
-            raise FileNotFoundError(f"路径不存在: {input_path}")
 
         print("collecting invoice files...")
-        invoice_files, output_base_dir = self._collect_files_and_output_base(input_path)
+        try:
+            input_path = Path(self.invoice_path).expanduser().resolve()
+            if not input_path.exists():
+                raise FileNotFoundError(f"路径不存在: {input_path}")
+
+            invoice_files, output_base_dir = self._collect_files_and_output_base(input_path)
+        except Exception as e:
+            print(f"Error occurred: {e}")
+            raise e
+        
         output_dir = output_base_dir / self.output_subdir
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / self.output_filename
@@ -397,7 +403,8 @@ class InvoiceFormatter:
                     "similarity": str(best_match[1]),
                     } 
                 else:
-                    print(f"Classification uncertain for invoice {invoice.get('file_path')}")
+                    print(f"发票分类判别失败 {invoice.get('file_path')}")
+                    print("已复制并移动该文件，该发票分类结果为uncertain，不会后续处理")
                     print(invoice.get('fields', {}).get('item_class', {}).get('value'))
                     print(f"Similarities: {sorted_similarities}")
                     self._set_invoice_class_and_copy(invoice, "uncertain", best_match[1], processed_file.parent)
@@ -449,12 +456,17 @@ class InvoiceFormatter:
             candidates = list(input_path.glob("*"))
 
         supported_extensions = self.PDF_EXTENSIONS | self.IMAGE_EXTENSIONS
-        invoice_files = [
-            path
-            for path in candidates
-            if path.is_file() and path.suffix.lower() in supported_extensions
-            and not set(path.parts).intersection({self.DEFAULT_OUTPUT_SUBDIR})
-        ]
+
+        invoice_files: List[Path] = []
+        invoice_count = 0
+        for path in candidates:
+            if path.is_file() and path.suffix.lower() in supported_extensions \
+            and not set(path.parts).intersection({self.DEFAULT_OUTPUT_SUBDIR}):
+                invoice_files.append(path)
+                invoice_count += 1
+                if invoice_count >= 100:
+                    raise Exception(f"找到发票文件超过数量上限，停止扫描以避免性能问题。请检查路径: {input_path}，并分类项目。")
+
         invoice_files.sort()
         return invoice_files, input_path
 
